@@ -1,0 +1,40 @@
+[project]
+name = "basketwise"
+version = "0.1.0"
+description = "BasketWise: product recommendations for online stores from their own order history - frequently bought together, personal picks, campaign and win-back lists."
+readme = "README.md"
+requires-python = "==3.12.*"
+authors = [{ name = "Anas Khan" }]
+license = { text = "MIT" }
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "scipy>=1.13",
+    "scikit-learn>=1.5",
+    "pyarrow>=16",
+    "openpyxl>=3.1",
+    "plotly>=5.20",
+    "streamlit>=1.38",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+analysis = ["matplotlib>=3.8", "seaborn>=0.13", "jupyterlab>=4.2", "nbconvert>=7.16", "ipykernel>=6.29"]
+
+[tool.uv]
+package = true
+default-groups = ["dev", "analysis"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/basketwise"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
