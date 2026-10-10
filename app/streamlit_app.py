@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import io
+import zipfile
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
+import requests
 import streamlit as st
+from openpyxl.utils.exceptions import InvalidFileException
 
-from basketwise import engine, importer, outputs
+from basketwise import engine, importer, outputs, remote
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO = ROOT / "data" / "demo_store.parquet"
@@ -39,6 +42,11 @@ def analyse(key: str, _lines: pd.DataFrame) -> engine.StoreResults:
     return engine.run(_lines)
 
 
+@st.cache_data(show_spinner=False, ttl=600, max_entries=5)
+def fetch_link(url: str) -> remote.Fetched:
+    return remote.fetch(url)
+
+
 def load_demo() -> tuple[str, pd.DataFrame]:
     lines = pd.read_parquet(DEMO)
     return "demo-store-v1", lines
@@ -48,7 +56,7 @@ def load_demo() -> tuple[str, pd.DataFrame]:
 with st.sidebar:
     st.title("🧺 BasketWise")
     st.caption("Turn your order history into product recommendations your customers actually want.")
-    source = st.radio("Data", ["Try the demo store", "Upload my orders"], index=0)
+    source = st.radio("Data", ["Try the demo store", "Upload my orders", "Paste a link"], index=0)
     st.divider()
     st.markdown("**Works with** Shopify and WooCommerce order exports, POS exports, or any CSV/Excel "
                 "with order, product, quantity and date columns.")
@@ -61,20 +69,44 @@ st.title("Product recommendations for your store")
 if source == "Try the demo store":
     key, lines = load_demo()
     st.info("Demo: 12 months of orders from a real UK online gift shop (UCI Online Retail II, CC BY 4.0). "
-            "Upload your own export from the sidebar to see results for your store.")
+            "Upload your own export or paste a link from the sidebar to see results for your store.")
 else:
-    upload = st.file_uploader("Upload your orders export (CSV or Excel)", type=["csv", "xlsx", "xls"])
-    if upload is None:
-        st.markdown("""
+    if source == "Paste a link":
+        link = st.text_input("Link to your orders file",
+                             placeholder="https://docs.google.com/spreadsheets/d/…  or a Drive, Dropbox, OneDrive or direct CSV/Excel link")
+        st.caption("Works with Google Sheets, Google Drive, Dropbox, OneDrive and direct CSV/Excel links. "
+                   "Set sharing to **Anyone with the link can view**. A store's website address alone can't be used, "
+                   "because orders are private.")
+        if not link:
+            st.stop()
+        try:
+            with st.spinner("Downloading your file…"):
+                fetched = fetch_link(link)
+        except remote.LinkError as exc:
+            st.error(str(exc))
+            st.stop()
+        except requests.RequestException:
+            st.error("Couldn't download the file (the site didn't respond). Check the link and try again.")
+            st.stop()
+        file_name, data = fetched.name, fetched.data
+        st.caption(f"Downloaded {len(data) / 1024:,.0f} KB from {fetched.source}.")
+    else:
+        upload = st.file_uploader("Upload your orders export (CSV or Excel)", type=["csv", "xlsx", "xls"])
+        if upload is None:
+            st.markdown("""
 **How to export your orders**
 - **Shopify:** Orders → Export → *All orders* → *CSV for Excel*.
 - **WooCommerce:** WooCommerce → Orders → Export (or an order-export plugin), including line items.
 - **Other / POS:** any file with one row per product per order: order number, product name or SKU,
   quantity, date, and ideally customer email or phone.
 """)
+            st.stop()
+        file_name, data = upload.name, upload.getvalue()
+    try:
+        raw = importer.read_file(file_name, data)
+    except (ValueError, OSError, zipfile.BadZipFile, InvalidFileException):  # ParserError is a ValueError
+        st.error("Couldn't read the file as CSV or Excel. Please check it's an orders export.")
         st.stop()
-    data = upload.getvalue()
-    raw = importer.read_file(upload.name, data)
     suggestion = importer.suggest_mapping(list(raw.columns))
     st.success(f"Read {len(raw):,} rows · detected format: **{suggestion.source}**")
     with st.expander("Check how your columns were matched", expanded=bool(suggestion.missing_required)):
