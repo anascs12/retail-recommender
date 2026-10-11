@@ -82,7 +82,7 @@ def check_public_host(url: str) -> None:
             raise LinkError("Links to private or internal network addresses are not allowed.")
 
 
-def _file_name(response: requests.Response, fallback: str) -> str:
+def _file_name(response, fallback: str) -> str:
     disposition = response.headers.get("content-disposition", "")
     match = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", disposition)
     name = match.group(1) if match else fallback
@@ -92,38 +92,55 @@ def _file_name(response: requests.Response, fallback: str) -> str:
     return name
 
 
-def fetch(url: str, session: requests.Session | None = None) -> Fetched:
+@dataclass
+class SafeResponse:
+    status: int
+    url: str                      # final URL after redirects
+    headers: dict
+    data: bytes
+
+
+def safe_get(url: str, session: requests.Session | None = None, max_bytes: int | None = None,
+             headers: dict | None = None) -> SafeResponse:
+    """GET with every hop checked against internal addresses, manual redirects, timeouts and a size cap."""
     session = session or requests.Session()
-    download_url, source, fallback = to_download_url(url)
-    current = download_url
+    limit = max_bytes or MAX_BYTES
+    current = url
     for _ in range(MAX_REDIRECTS + 1):
         check_public_host(current)
         response = session.get(current, stream=True, timeout=TIMEOUT, allow_redirects=False,
-                               headers={"User-Agent": USER_AGENT})
+                               headers={"User-Agent": USER_AGENT, **(headers or {})})
         if response.is_redirect or response.status_code in (301, 302, 303, 307, 308):
             current = urljoin(current, response.headers.get("location", ""))
             continue
         break
     else:
         raise LinkError("The link redirected too many times.")
-
-    if response.status_code in (401, 403) or (source == "Google Sheets" and "accounts.google.com" in current):
-        raise LinkError(f"This {source} file is private. Set sharing to “Anyone with the link can view” and try again.")
-    if response.status_code == 404:
-        raise LinkError("Nothing was found at that link. Check that it is correct and still shared.")
-    if response.status_code >= 400:
-        raise LinkError(f"The link returned an error ({response.status_code}).")
-
     declared = int(response.headers.get("content-length") or 0)
-    if declared > MAX_BYTES:
-        raise LinkError(f"The file is larger than {MAX_BYTES // 1024 // 1024} MB.")
+    if declared > limit:
+        raise LinkError(f"The file is larger than {limit // 1024 // 1024} MB.")
     chunks, total = [], 0
-    for chunk in response.iter_content(chunk_size=1 << 16):
-        total += len(chunk)
-        if total > MAX_BYTES:
-            raise LinkError(f"The file is larger than {MAX_BYTES // 1024 // 1024} MB.")
-        chunks.append(chunk)
-    data = b"".join(chunks)
+    if response.status_code < 400:
+        for chunk in response.iter_content(chunk_size=1 << 16):
+            total += len(chunk)
+            if total > limit:
+                raise LinkError(f"The file is larger than {limit // 1024 // 1024} MB.")
+            chunks.append(chunk)
+    return SafeResponse(response.status_code, current, dict(response.headers), b"".join(chunks))
+
+
+def fetch(url: str, session: requests.Session | None = None) -> Fetched:
+    download_url, source, fallback = to_download_url(url)
+    response = safe_get(download_url, session)
+    current = response.url
+
+    if response.status in (401, 403) or (source == "Google Sheets" and "accounts.google.com" in current):
+        raise LinkError(f"This {source} file is private. Set sharing to “Anyone with the link can view” and try again.")
+    if response.status == 404:
+        raise LinkError("Nothing was found at that link. Check that it is correct and still shared.")
+    if response.status >= 400:
+        raise LinkError(f"The link returned an error ({response.status}).")
+    data = response.data
 
     head = data[:2000].lstrip().lower()
     if head.startswith((b"<!doctype html", b"<html")):

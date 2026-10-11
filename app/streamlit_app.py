@@ -13,7 +13,7 @@ import requests
 import streamlit as st
 from openpyxl.utils.exceptions import InvalidFileException
 
-from basketwise import engine, importer, outputs, remote
+from basketwise import catalog, engine, importer, outputs, remote, similar
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO = ROOT / "data" / "demo_store.parquet"
@@ -47,6 +47,11 @@ def fetch_link(url: str) -> remote.Fetched:
     return remote.fetch(url)
 
 
+@st.cache_data(show_spinner=False, ttl=3600, max_entries=5)
+def import_site(url: str, limit: int) -> catalog.Catalog:
+    return catalog.import_catalog(url, limit=limit)
+
+
 def load_demo() -> tuple[str, pd.DataFrame]:
     lines = pd.read_parquet(DEMO)
     return "demo-store-v1", lines
@@ -56,7 +61,8 @@ def load_demo() -> tuple[str, pd.DataFrame]:
 with st.sidebar:
     st.title("🧺 BasketWise")
     st.caption("Turn your order history into product recommendations your customers actually want.")
-    source = st.radio("Data", ["Try the demo store", "Upload my orders", "Paste a link"], index=0)
+    source = st.radio("Data", ["Try the demo store", "Upload my orders", "Paste a link", "Import from my website"],
+                      index=0)
     st.divider()
     st.markdown("**Works with** Shopify and WooCommerce order exports, POS exports, or any CSV/Excel "
                 "with order, product, quantity and date columns.")
@@ -64,6 +70,55 @@ with st.sidebar:
                 "Nothing is stored or shared.")
 
 st.title("Product recommendations for your store")
+
+# ------------------------------------------------------------------ website catalogue
+if source == "Import from my website":
+    st.subheader("Import your product catalogue from your website")
+    st.markdown("Works with **Shopify** and **WooCommerce** stores, and most other shops that publish product "
+                "pages for Google. Your **orders and customers are private** and are never read from the website; "
+                "use *Upload my orders* or *Paste a link* for those.")
+    site = st.text_input("Your store's website", placeholder="https://yourshop.pk")
+    limit = st.select_slider("Maximum products to import", [100, 250, 500, 1000, 2500, 5000], value=500)
+    st.caption("BasketWise respects your site's robots.txt and loads pages slowly (about one per second), so large "
+               "catalogues on sites without a Shopify/WooCommerce feed can take a few minutes.")
+    if not site:
+        st.stop()
+    try:
+        with st.spinner("Reading your catalogue…"):
+            cat = import_site(site, limit)
+    except catalog.CatalogError as exc:
+        st.error(str(exc))
+        st.stop()
+    except requests.RequestException:
+        st.error("The website didn't respond. Check the address and try again.")
+        st.stop()
+    products = cat.products
+    st.success(f"Imported **{len(products):,} products** from {cat.base_url} via **{cat.platform}**.")
+    for note in cat.notes:
+        st.caption(f"ℹ️ {note}")
+    pairs = similar.similar_products(products)
+    tab_sim, tab_cat = st.tabs(["🧩 Similar products", "📦 Catalogue"])
+    with tab_sim:
+        st.caption("Products that look alike by name, category, tags and description, in a similar price range. "
+                   "Works for new products with no sales yet. Use these for 'You may also like' on product pages.")
+        if pairs.empty:
+            st.info("Not enough product text to find similar items.")
+        else:
+            chosen_title = st.selectbox("Product", sorted(pairs["title"].unique()))
+            view = pairs[pairs["title"] == chosen_title][["similar_title", "similarity", "similar_url"]]
+            st.dataframe(view, width="stretch", hide_index=True,
+                         column_config={"similar_url": st.column_config.LinkColumn("Link"),
+                                        "similarity": st.column_config.ProgressColumn("Similarity", min_value=0,
+                                                                                      max_value=1, format="%.2f")})
+            st.download_button("Download all similar-product pairs (CSV)", to_csv(pairs), "similar_products.csv",
+                               "text/csv")
+    with tab_cat:
+        st.dataframe(products.drop(columns=["image"]), width="stretch", hide_index=True,
+                     column_config={"url": st.column_config.LinkColumn("Link")})
+        st.download_button("Download catalogue (CSV)", to_csv(products), "catalogue.csv", "text/csv")
+    st.info("**Next step:** add your order history (*Upload my orders* or *Paste a link*) to unlock "
+            "frequently-bought-together, bundles and personal picks.")
+    st.stop()
 
 # ------------------------------------------------------------------ data in
 if source == "Try the demo store":

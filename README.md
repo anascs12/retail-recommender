@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
 ![SciPy](https://img.shields.io/badge/SciPy-sparse-8CAAE6?logo=scipy&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-17%20passing-2EA44F)
+![Tests](https://img.shields.io/badge/tests-40%20passing-2EA44F)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ![BasketWise overview](reports/figures/app_overview.png)
@@ -20,6 +20,15 @@ Small and mid-sized online stores (Shopify, WooCommerce, POS) that have order hi
 | 👤 **Personal picks** (with a reason for each) | Personalised emails or WhatsApp messages: "because you bought X…" |
 | 📣 **Campaign lists** | Who to target for a product launch or clearance |
 | 🔁 **Win-back list** | Valuable customers who stopped buying, each with three likely products |
+
+## Three ways to bring in data
+| Option | What it reads | What it unlocks |
+|---|---|---|
+| **Upload** a CSV/Excel export | Orders (Shopify, WooCommerce, POS, generic) | Everything below |
+| **Paste a link** | Google Sheets, Google Drive, Dropbox, OneDrive or a direct CSV/Excel URL | Everything below |
+| **Import from my website** | The public **product catalogue**: Shopify feed, WooCommerce Store API, or product pages (schema.org / Open Graph) | **Similar products** by name, category, tags, description and price range, which works for new products and new stores with **no sales yet** |
+
+Orders and customers are private and are never scraped; they come only from the owner's own export. Website import respects `robots.txt`, paces requests about 1 second apart, identifies itself and caps pages. Links are fetched defensively: no private, loopback or link-local addresses (re-checked after every redirect), with a size cap and timeouts.
 
 ## Does it work? Results on a real store
 Tested on **UCI Online Retail II** (about 1 million order lines from a UK online gift shop, 2009–2011). Every model learned from orders before **10 September 2011** and was scored on what **2,286 returning customers actually bought** in the following 90 days. Hyper-parameters were chosen on an **earlier validation window**, so the test period stayed untouched.
@@ -79,7 +88,7 @@ Uploaded files are processed in memory for the session only, and nothing is writ
 ```bash
 uv sync
 uv run streamlit run app/streamlit_app.py     # opens the demo store; upload your own export from the sidebar
-uv run pytest                                 # 17 tests
+uv run pytest                                 # 40 tests
 ```
 
 ## Project structure
@@ -99,7 +108,7 @@ tests/
 ## Limitations
 - It needs order history with repeat customers. Personal picks need at least 50 identified customers, and below that the app says so instead of over-promising (bought-together and bundles still work).
 - Offline accuracy is not the same as revenue uplift; an A/B test in the store is the real proof.
-- It doesn't yet use product attributes (category, price) or cover brand-new products with no sales (the cold-start problem).
+- Similar products (from the website catalogue) and purchase-based recommendations are separate views; blending them into one hybrid is the next step.
 
 ## Data and credits
 Demo data: [Online Retail II](https://archive.ics.uci.edu/dataset/502/online+retail+ii) by Daqing Chen, UCI Machine Learning Repository, CC BY 4.0. EASE: H. Steck, *Embarrassingly Shallow Autoencoders for Sparse Data*, WWW 2019.
